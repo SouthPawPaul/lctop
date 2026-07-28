@@ -82,7 +82,7 @@ lctop --test
 ```
 lctop                          slot 0
     12,345 / 8,192 tokens          150.6%              PROCESSING
-              ████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+              ████████████████········································
 
         prompt 2,296   generated 10,049   remaining 0
     http://127.0.0.1:8080   every 1s
@@ -103,23 +103,42 @@ lctop                          slot 0
 | `y` | Confirm quit |
 | Any other | Cancel quit and return to monitoring |
 
+## Configuration
+
+`lctop` reads optional settings from `~/.lctop.json`:
+
+```json
+{
+  "url": "http://192.168.1.50",
+  "port": 8080,
+  "slot": 0,
+  "interval": 1.0,
+  "discovery_url": "http://127.0.0.1:8080/models"
+}
+```
+
+CLI arguments override config file values.
+
 ## Architecture
 
 ```
-┌──────────┐    ┌──────────────┐    ┌───────────┐
-│  Main     │───>│  Monitor     │───>│  Draw     │
-│  Loop     │    │  (fetcher)   │    │  (curses) │
-└──────────┘    └──────────────┘    └───────────┘
-                          │
-                          ▼
-                   llama.cpp /slots
+┌──────────┐    ┌──────────────┐    ┌───────────────┐    ┌───────────┐
+│  Main     │───>│  Monitor     │───>│  Discover     │───>│  Draw     │
+│  Loop     │    │  (fetcher)   │    │  (endpoint)   │    │  (curses) │
+└──────────┘    └──────────────┘    └───────────────┘    └───────────┘
+                                          │                    │
+                                          ▼                    ▼
+                                   llama.cpp /models     llama.cpp /slots
 ```
 
 - **`Monitor`** — fetches slot data from the llama.cpp `/slots` endpoint, normalises it across server versions, and keeps a bounded deque of recent samples.
 - **`SlotSample`** — a lightweight dataclass holding normalised context data for one slot.
 - **`draw()`** — renders a single frame to the terminal.
+- **`draw_progress_bar()`** — draws the colour-coded progress bar with fill/empty segments.
 - **`main_loop()`** — the polling loop that drives fetch-and-draw, handling input and resizing.
 - **`run_test()`** — a simulated mode that sweeps context usage from 0 % to 100 % and back for UI preview.
+- **`discover_endpoint()`** — queries the `/models` endpoint to find a loaded model and infer its server URL and port.
+- **`config_loader.py`** — standalone JSON config loader utility.
 
 ## Server compatibility
 
