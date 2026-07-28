@@ -23,14 +23,15 @@ import time
 import urllib.error
 import urllib.request
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
-
+from typing import Any
 
 MIN_WIDTH = 60
 MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
 DEFAULT_INTERVAL = 1.0
+DISCOVERY_URL = "http://127.0.0.1:8080/models"
 REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
 
@@ -144,7 +145,7 @@ class Monitor:
         elif isinstance(payload, list):
             slots = payload
         else:
-            raise ValueError("unexpected /slots response format")
+            raise TypeError("unexpected /slots response format")
 
         if not slots:
             raise ValueError("/slots returned no slots")
@@ -539,7 +540,7 @@ def draw_progress_bar(
                "▒" if fraction<0.50 else
                "▓" if fraction<0.75 else
                "█")
-    filled=max(0,min(width,int(round(width*fraction))))
+    filled=max(0,min(width,round(width*fraction)))
     addstr_safe(window,y,x,"[",curses.A_BOLD)
     for i in range(width):
         if i<filled:
@@ -640,7 +641,7 @@ def run_test(stdscr: curses.window, interval: float) -> None:
                 direction = 1.0
 
             limit = 8192
-            used = int(round(limit * phase))
+            used = round(limit * phase)
             prompt = min(used, int(limit * 0.28))
             generated = max(0, used - prompt)
             processing = 0.02 < phase < 0.98
@@ -731,7 +732,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--port",
         type=port_number,
         metavar="PORT",
-        help="llama.cpp server port (required unless --test is used)",
+        help="llama.cpp server port",
     )
     parser.add_argument(
         "--slot",
@@ -752,10 +753,44 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="run a simulated usage sweep instead of contacting llama.cpp",
     )
-    args = parser.parse_args(argv)
-    if not args.test and args.port is None:
-        parser.error("--port is required unless --test is used")
-    return args
+    return parser.parse_args(argv)
+
+
+def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int]:
+    """Discover the llama.cpp endpoint from the models list."""
+    request = urllib.request.Request(
+        discovery_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "lctop/1.0",
+        },
+    )
+
+    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+        payload = json.load(response)
+
+    if isinstance(payload, dict) and "data" in payload:
+        models = payload["data"]
+    elif isinstance(payload, list):
+        models = payload
+    else:
+        raise ValueError(f"Expected dict with 'data' or list from {discovery_url}")
+
+    for model in models:
+        status = model.get("status")
+        if isinstance(status, dict) and (status.get("value") == "loaded" or status.get("status") == "loaded"):
+            args_list = status.get("args")
+            if isinstance(args_list, list) and len(args_list) > 5:
+                try:
+                    url = str(args_list[2])
+                    if "://" not in url:
+                        url = f"http://{url}"
+                    port = int(args_list[5])
+                    return url, port
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+    raise ValueError("No loaded model found in discovery response")
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -771,7 +806,17 @@ def main(argv: Iterable[str] | None = None) -> int:
             # Fully simulated: no endpoint is constructed and no HTTP request is made.
             curses.wrapper(run_test, args.interval)
         else:
-            endpoint = f"{args.url.rstrip('/')}:{args.port}/slots"
+            url = args.url
+            port = args.port
+
+            if port is None:
+                try:
+                    url, port = discover_endpoint()
+                except (ValueError, urllib.error.URLError, TimeoutError) as e:
+                    print(f"lctop: discovery failed: {e}", file=sys.stderr)
+                    return 1
+
+            endpoint = f"{url.rstrip('/')}:{port}/slots"
             monitor = Monitor(endpoint, args.slot, args.interval)
             curses.wrapper(main_loop, monitor)
     except KeyboardInterrupt:

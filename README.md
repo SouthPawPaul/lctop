@@ -37,17 +37,25 @@ lctop [options]
 | Flag | Description | Default |
 |---|---|---|
 | `--url URL` | llama.cpp server URL | `http://127.0.0.1` |
-| `--port PORT` | llama.cpp server port (**required**) | — |
+| `--port PORT` | llama.cpp server port (optional) | — |
 | `--slot N` | Slot ID to monitor | `0` |
 | `--interval SECONDS` | Polling interval | `1.0` |
 | `--test` | Run a simulated usage sweep (no server required) | — |
 
+If `--port` is not provided, `lctop` attempts to discover the active model and its port from `http://127.0.0.1:8080/models`.
+
 ### Examples
 
-Monitor slot 0 on the default llama.cpp server:
+Monitor slot 0 using auto-discovery:
 
 ```bash
-lctop --port 8080
+lctop
+```
+
+Monitor slot 0 on a specific server (manual configuration):
+
+```bash
+lctop --url http://192.168.1.50 --port 8080
 ```
 
 Monitor a specific slot with a custom polling interval:
