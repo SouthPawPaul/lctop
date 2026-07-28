@@ -62,24 +62,6 @@ Run the built-in test mode to preview the UI without a server:
 lctop --test
 ```
 
-## Colour theme
-
-`lctop` uses the [Catppuccin Mocha](https://catppuccin.com/palette) palette:
-
-| Element     | Colour   | Hex     |
-|-------------|----------|---------|
-| Progress ≤50%  | Green    | `#a6e3a1` |
-| 50–70%    | Yellow   | `#f9e2af` |
-| 70–85%    | Peach    | `#fab387` |
-| >85%      | Red      | `#f38ba8` |
-| Text / labels | Subtext0 | `#a6adc8` |
-| Header / title | Sky     | `#89dceb` |
-| Errors    | Maroon   | `#eba0ac` |
-| Dialog box | Text on Surface0 | `#cdd6f4` on `#313244` |
-
-Colours use 256-colour indices when the terminal supports them,
-falling back to safe 16-colour equivalents on older terminals.
-
 ## Interface
 
 ```
