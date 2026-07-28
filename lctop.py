@@ -18,6 +18,7 @@ import curses
 import json
 import locale
 import math
+import os
 import sys
 import time
 import urllib.error
@@ -32,8 +33,20 @@ MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
 DEFAULT_INTERVAL = 1.0
 DISCOVERY_URL = "http://127.0.0.1:8080/models"
+CONFIG_FILE = os.path.expanduser("~/.lctop.json")
 REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
+
+
+def load_config() -> dict[str, Any]:
+    """Load configuration from ~/.lctop.json."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
 
 # Colour-pair IDs.
 PAIR_GREEN = 1
@@ -719,32 +732,34 @@ def port_number(value: str) -> int:
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
+    config = load_config()
     parser = argparse.ArgumentParser(
         prog="lctop",
         description="Terminal-based llama.cpp context monitor.",
     )
     parser.add_argument(
         "--url",
-        default=DEFAULT_URL,
+        default=config.get("url", DEFAULT_URL),
         help=f"llama.cpp server URL (default: {DEFAULT_URL})",
     )
     parser.add_argument(
         "--port",
         type=port_number,
         metavar="PORT",
+        default=config.get("port"),
         help="llama.cpp server port",
     )
     parser.add_argument(
         "--slot",
         type=non_negative_int,
-        default=0,
+        default=config.get("slot", 0),
         metavar="N",
         help="slot ID to monitor (default: 0)",
     )
     parser.add_argument(
         "--interval",
         type=positive_float,
-        default=DEFAULT_INTERVAL,
+        default=config.get("interval", DEFAULT_INTERVAL),
         metavar="SECONDS",
         help=f"polling interval (default: {DEFAULT_INTERVAL:g})",
     )
@@ -755,7 +770,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--discovery-url",
-        default=DISCOVERY_URL,
+        default=config.get("discovery_url", DISCOVERY_URL),
         help=f"URL to discover models from (default: {DISCOVERY_URL})",
     )
     return parser.parse_args(argv)
