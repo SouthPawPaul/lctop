@@ -35,40 +35,15 @@ REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
 
 # Colour-pair IDs.
-# Catppuccin Mocha palette:
-#   Rosewater #f5e0dc  |  Flamingo #f2cdcd  |  Pink #f5c2e7
-#   Mauve #cba6f7      |  Red #f38ba8     |  Maroon #eba0ac
-#   Peach #fab387      |  Yellow #f9e2af  |  Green #a6e3a1
-#   Teal #94e2d5       |  Sky #89dceb     |  Sapphire #74c7ec
-#   Blue #89b4fa       |  Lavender #b4befe |  Text #cdd6f4
-#   Subtext1 #bac2de   |  Subtext0 #a6adc8
-#   Overlay2 #9399b2   |  Overlay1 #7f849c |  Overlay0 #6c7086
-#   Surface2 #585b70   |  Surface1 #45475a |  Surface0 #313244
-#   Base #1e1e2e       |  Mantle #181825   |  Crust #11111b
-PAIR_GREEN = 1       # Green #a6e3a1
-PAIR_YELLOW = 2      # Yellow #f9e2af
-PAIR_PEACH = 3       # Peach #fab387
-PAIR_RED = 4         # Red #f38ba8
-PAIR_DIM = 5         # Subtext0 #a6adc8
-PAIR_HEADER = 6      # Sky #89dceb
-PAIR_ERROR = 7       # Maroon #eba0ac
-PAIR_DIALOG = 8      # Text on Base (magenta-ish bg)
-PAIR_DIALOG_ACCENT = 9  # Mauve #cba6f7
-
-# Catppuccin Mocha hex values for 256-colour terminals.
-# Mapped to nearest 256-colour indices.
-CTTP_GREEN = 114     # #a6e3a1
-CTTP_YELLOW = 229    # #f9e2af
-CTTP_PEACH = 216     # #fab387
-CTTP_RED = 212       # #f38ba8
-CTTP_DIM = 146       # #a6adc8
-CTTP_HEADER = 117    # #89dceb
-CTTP_ERROR = 211     # #eba0ac
-CTTP_DIALOG_BG = 13  # Base #1e1e2e → dark magenta-ish (closest 256)
-CTTP_DIALOG_FG = 188 # Text #cdd6f4
-CTTP_DIALOG_ACCENT = 176  # Mauve #cba6f7 (closest warm accent)
-CTTP_DIALOG_ACCENT_ALT = 141  # Lavender #b4befe (alternative)
-CTTP_SURF0 = 60      # Surface0 #313244
+PAIR_GREEN = 1
+PAIR_YELLOW = 2
+PAIR_ORANGE = 3
+PAIR_RED = 4
+PAIR_DIM = 5
+PAIR_HEADER = 6
+PAIR_ERROR = 7
+PAIR_DIALOG = 8
+PAIR_DIALOG_ACCENT = 9
 
 SHADE_CHARS=("░","▒","▓","█")
 
@@ -350,41 +325,25 @@ def infer_processing(slot: dict[str, Any], state: str) -> bool:
 
 
 def init_colours() -> None:
-    """Initialise colour pairs using the Catppuccin Mocha palette."""
     curses.start_color()
     try:
         curses.use_default_colors()
         background = -1
     except curses.error:
-        background = 16  # Crust #11111b in 256-colour mode
+        background = curses.COLOR_BLACK
 
-    use_256 = curses.COLORS >= 256
+    orange = 208 if curses.COLORS >= 256 else curses.COLOR_YELLOW
+    dim_fg = 244 if curses.COLORS >= 256 else curses.COLOR_WHITE
 
-    safe_init_pair(PAIR_GREEN,
-                   CTTP_GREEN if use_256 else curses.COLOR_GREEN, background)
-    safe_init_pair(PAIR_YELLOW,
-                   CTTP_YELLOW if use_256 else curses.COLOR_YELLOW, background)
-    safe_init_pair(PAIR_PEACH,
-                   CTTP_PEACH if use_256 else curses.COLOR_YELLOW, background)
-    safe_init_pair(PAIR_RED,
-                   CTTP_RED if use_256 else curses.COLOR_RED, background)
-    safe_init_pair(PAIR_DIM,
-                   CTTP_DIM if use_256 else 7, background)
-    safe_init_pair(PAIR_HEADER,
-                   CTTP_HEADER if use_256 else curses.COLOR_CYAN, background)
-    safe_init_pair(PAIR_ERROR,
-                   CTTP_ERROR if use_256 else curses.COLOR_RED, background)
-
-    # Dialog: dark Surface0 background with Text foreground
-    if use_256:
-        safe_init_pair(PAIR_DIALOG, CTTP_DIALOG_FG, CTTP_SURF0)
-    else:
-        safe_init_pair(PAIR_DIALOG, curses.COLOR_WHITE, curses.COLOR_BLACK)
-
-    # Dialog accent: Mauve
-    safe_init_pair(PAIR_DIALOG_ACCENT,
-                   CTTP_DIALOG_ACCENT_ALT if use_256 else curses.COLOR_YELLOW,
-                   CTTP_SURF0 if use_256 else curses.COLOR_BLACK)
+    safe_init_pair(PAIR_GREEN, curses.COLOR_GREEN, background)
+    safe_init_pair(PAIR_YELLOW, curses.COLOR_YELLOW, background)
+    safe_init_pair(PAIR_ORANGE, orange, background)
+    safe_init_pair(PAIR_RED, curses.COLOR_RED, background)
+    safe_init_pair(PAIR_DIM, dim_fg, background)
+    safe_init_pair(PAIR_HEADER, curses.COLOR_CYAN, background)
+    safe_init_pair(PAIR_ERROR, curses.COLOR_RED, background)
+    safe_init_pair(PAIR_DIALOG, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    safe_init_pair(PAIR_DIALOG_ACCENT, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
 
 def safe_init_pair(pair: int, foreground: int, background: int) -> None:
@@ -395,13 +354,12 @@ def safe_init_pair(pair: int, foreground: int, background: int) -> None:
 
 
 def colour_pair_for_fraction(fraction: float) -> int:
-    """Return the Catppuccin Mocha colour pair for a given fill fraction."""
     if fraction < 0.50:
         return PAIR_GREEN
     if fraction < 0.70:
         return PAIR_YELLOW
     if fraction < 0.85:
-        return PAIR_PEACH
+        return PAIR_ORANGE
     return PAIR_RED
 
 
