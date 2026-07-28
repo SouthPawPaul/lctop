@@ -753,6 +753,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="run a simulated usage sweep instead of contacting llama.cpp",
     )
+    parser.add_argument(
+        "--discovery-url",
+        default=DISCOVERY_URL,
+        help=f"URL to discover models from (default: {DISCOVERY_URL})",
+    )
     return parser.parse_args(argv)
 
 
@@ -811,7 +816,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
             if port is None:
                 try:
-                    url, port = discover_endpoint()
+                    url, port = discover_endpoint(args.discovery_url)
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
                     print(f"lctop: discovery failed: {e}", file=sys.stderr)
                     return 1

@@ -41,8 +41,9 @@ lctop [options]
 | `--slot N` | Slot ID to monitor | `0` |
 | `--interval SECONDS` | Polling interval | `1.0` |
 | `--test` | Run a simulated usage sweep (no server required) | — |
+| `--discovery-url URL` | URL to discover models from | `http://127.0.0.1:8080/models` |
 
-If `--port` is not provided, `lctop` attempts to discover the active model and its port from `http://127.0.0.1:8080/models`.
+If `--port` is not provided, `lctop` attempts to discover the active model and its port from the `--discovery-url`.
 
 ### Examples
 
@@ -56,6 +57,12 @@ Monitor slot 0 on a specific server (manual configuration):
 
 ```bash
 lctop --url http://192.168.1.50 --port 8080
+```
+
+Monitor slot 0 using a custom discovery endpoint:
+
+```bash
+lctop --discovery-url http://another-server:9000/models
 ```
 
 Monitor a specific slot with a custom polling interval:
