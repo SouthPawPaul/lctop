@@ -21,7 +21,7 @@ import os
 import sys
 import time
 import urllib.error
-import urllib.parse
+import urllib.parse as urlparse
 import urllib.request
 from collections import deque
 from collections.abc import Iterable
@@ -994,7 +994,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 # or fall back to DEFAULT_PORT.
                 port = DEFAULT_PORT
                 try:
-                    parsed = urllib.parse.urlparse(url)
+                    parsed = urlparse.urlparse(url)
                     if parsed.port:
                         port = parsed.port
                 except Exception:
@@ -1005,13 +1005,13 @@ def main(argv: Iterable[str] | None = None) -> int:
                     )
 
             # Properly reconstruct the URL with port in the right place.
-            parsed = urllib.parse.urlparse(url)
+            parsed = urlparse.urlparse(url)
             netloc = parsed.hostname or "localhost"
             if parsed.port:
                 netloc = f"{parsed.hostname}:{parsed.port}"
             elif port:
                 netloc = f"{parsed.hostname}:{port}"
-            endpoint = urlunparse((
+            endpoint = urlparse.urlunparse((
                 parsed.scheme,
                 netloc,
                 parsed.path.rstrip("/") + "/slots",
