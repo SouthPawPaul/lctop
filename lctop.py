@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from collections.abc import Iterable
@@ -32,6 +33,7 @@ from debug_logger import DebugLogger
 MIN_WIDTH = 60
 MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
+DEFAULT_PORT = 8080
 DEFAULT_INTERVAL = 1.0
 DISCOVERY_URL = "http://127.0.0.1:8080/models"
 CONFIG_FILE = os.path.expanduser("~/.lctop.json")
@@ -969,11 +971,12 @@ def main(argv: Iterable[str] | None = None) -> int:
             url = args.url
             port = args.port
 
-            if port is None:
+            # Only attempt discovery when neither --url nor --port is provided.
+            if port is None and (url == DEFAULT_URL or not url.startswith("http")):
                 try:
                     if args.debug:
                         debug_logger.info(
-                            f"Port not specified, attempting discovery from {args.discovery_url}"
+                            f"Port not specified and no explicit URL, attempting discovery from {args.discovery_url}"
                         )
                     url, port = discover_endpoint(args.discovery_url)
                     if args.debug:
@@ -986,8 +989,36 @@ def main(argv: Iterable[str] | None = None) -> int:
                         debug_logger.exception(error_msg, e)
                     print(error_msg, file=sys.stderr)
                     return 1
+            elif port is None:
+                # User provided --url but no --port; try to extract port from URL
+                # or fall back to DEFAULT_PORT.
+                port = DEFAULT_PORT
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    if parsed.port:
+                        port = parsed.port
+                except Exception:
+                    pass
+                if args.debug:
+                    debug_logger.info(
+                        f"Using default port {port} for URL {url}"
+                    )
 
-            endpoint = f"{url.rstrip('/')}:{port}/slots"
+            # Properly reconstruct the URL with port in the right place.
+            parsed = urllib.parse.urlparse(url)
+            netloc = parsed.hostname or "localhost"
+            if parsed.port:
+                netloc = f"{parsed.hostname}:{parsed.port}"
+            elif port:
+                netloc = f"{parsed.hostname}:{port}"
+            endpoint = urlunparse((
+                parsed.scheme,
+                netloc,
+                parsed.path.rstrip("/") + "/slots",
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            ))
             if args.debug:
                 debug_logger.info(f"Connecting to endpoint: {endpoint}")
             monitor = Monitor(endpoint, args.slot, args.interval, debug_logger=debug_logger)
