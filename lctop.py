@@ -27,6 +27,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from debug_logger import DebugLogger
+
 MIN_WIDTH = 60
 MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
@@ -103,15 +105,30 @@ class Monitor:
         slot_id: int,
         interval: float,
         history_size: int = 300,
+        debug_logger: DebugLogger | None = None,
     ) -> None:
         self.url = url
         self.slot_id = slot_id
         self.interval = interval
+        self.debug_logger = debug_logger
         self.samples: deque[SlotSample] = deque(maxlen=history_size)
         self.last_good_sample: SlotSample | None = None
+        self.fetch_count = 0
+
+        if self.debug_logger:
+            self.debug_logger.info(
+                f"Monitor initialized: url={url}, slot_id={slot_id}, "
+                f"interval={interval}s, history_size={history_size}"
+            )
 
     def fetch(self) -> SlotSample:
         """Fetch and normalise one sample from the configured /slots endpoint."""
+        self.fetch_count += 1
+        if self.debug_logger:
+            self.debug_logger.debug(
+                f"Fetch #{self.fetch_count} initiated for {self.url}"
+            )
+
         request = urllib.request.Request(
             self.url,
             headers={
@@ -121,12 +138,28 @@ class Monitor:
         )
 
         try:
+            if self.debug_logger:
+                self.debug_logger.debug(f"Sending HTTP request to {self.url}")
+
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
                 payload = json.load(response)
+
+            if self.debug_logger:
+                self.debug_logger.debug(
+                    f"HTTP response received, type={type(payload).__name__}"
+                )
 
             slot = self._select_slot(payload)
             sample = self._normalise_slot(slot)
             self.last_good_sample = sample
+
+            if self.debug_logger:
+                self.debug_logger.info(
+                    f"Fetch #{self.fetch_count} succeeded: "
+                    f"slot_id={sample.slot_id}, used={sample.used}/{sample.limit}, "
+                    f"prompt={sample.prompt_tokens}, generated={sample.generated_tokens}, "
+                    f"state={sample.raw_state}"
+                )
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
@@ -137,6 +170,10 @@ class Monitor:
             TypeError,
             KeyError,
         ) as exc:
+            if self.debug_logger:
+                self.debug_logger.exception(
+                    f"Fetch #{self.fetch_count} failed for {self.url}", exc
+                )
 
             sample = self._error_sample(str(exc))
 
@@ -146,26 +183,56 @@ class Monitor:
     def add_simulated(self, sample: SlotSample) -> None:
         self.last_good_sample = sample
         self.samples.append(sample)
+        if self.debug_logger:
+            self.debug_logger.debug(
+                f"Simulated sample added: slot_id={sample.slot_id}, "
+                f"used={sample.used}/{sample.limit}, processing={sample.processing}"
+            )
 
     def _select_slot(self, payload: Any) -> dict[str, Any]:
         if isinstance(payload, dict):
             if isinstance(payload.get("slots"), list):
                 slots = payload["slots"]
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        f"Found {len(slots)} slots in 'slots' key"
+                    )
             elif isinstance(payload.get("data"), list):
                 slots = payload["data"]
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        f"Found {len(slots)} slots in 'data' key"
+                    )
             else:
                 # Some builds may expose a single slot object directly.
                 slots = [payload]
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        "Using payload as single-slot response"
+                    )
         elif isinstance(payload, list):
             slots = payload
+            if self.debug_logger:
+                self.debug_logger.debug(
+                    f"Payload is a list with {len(slots)} items"
+                )
         else:
             raise TypeError("unexpected /slots response format")
 
         if not slots:
             raise ValueError("/slots returned no slots")
 
+        if self.debug_logger:
+            self.debug_logger.debug(
+                f"Scanning {len(slots)} slots for target slot_id={self.slot_id}"
+            )
+
         for slot in slots:
             if not isinstance(slot, dict):
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        f"Skipping non-dict slot: {type(slot).__name__}"
+                    )
                 continue
             candidate_id = first_int(
                 slot,
@@ -174,13 +241,26 @@ class Monitor:
                 "slot",
                 default=-1,
             )
+            if self.debug_logger:
+                self.debug_logger.debug(
+                    f"  Slot candidate: id={candidate_id}"
+                )
             if candidate_id == self.slot_id:
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        f"Matched slot with id={candidate_id}"
+                    )
                 return slot
 
         raise ValueError(f"slot {self.slot_id} not found")
 
     def _normalise_slot(self, slot: dict[str, Any]) -> SlotSample:
         slot_id = first_int(slot, "id", "slot_id", "slot", default=self.slot_id)
+
+        if self.debug_logger:
+            self.debug_logger.debug(
+                f"Normalizing slot data: raw keys={list(slot.keys())}"
+            )
 
         limit = first_int(
             slot,
@@ -212,6 +292,10 @@ class Monitor:
         if generated == 0:
             next_token = slot.get("next_token")
             if isinstance(next_token, list) and next_token:
+                if self.debug_logger:
+                    self.debug_logger.debug(
+                        "Falling back to next_token[0] for generated tokens"
+                    )
                 generated = first_int(
                     next_token[0],
                     "n_decoded",
@@ -233,10 +317,18 @@ class Monitor:
         if used < 0:
             # llama.cpp versions expose slightly different counters. Prompt +
             # decoded tokens is the best portable approximation.
+            if self.debug_logger:
+                self.debug_logger.debug(
+                    f"n_ctx_used not found, computing used = prompt({prompt}) + generated({generated})"
+                )
             used = max(0, prompt + generated)
 
         if limit <= 0:
             # Try nested task/result objects used by some server builds.
+            if self.debug_logger:
+                self.debug_logger.debug(
+                    "Context limit not found directly, searching nested objects"
+                )
             for nested_key in ("task", "result", "metrics"):
                 nested = slot.get(nested_key)
                 if isinstance(nested, dict):
@@ -249,6 +341,10 @@ class Monitor:
                         default=limit,
                     )
                     if limit > 0:
+                        if self.debug_logger:
+                            self.debug_logger.debug(
+                                f"Found limit={limit} in nested '{nested_key}' object"
+                            )
                         break
 
         raw_state = str(
@@ -259,6 +355,13 @@ class Monitor:
         ).strip().lower()
 
         processing = infer_processing(slot, raw_state)
+
+        if self.debug_logger:
+            self.debug_logger.debug(
+                f"Normalized: slot_id={slot_id}, used={used}, limit={limit}, "
+                f"prompt={prompt}, generated={generated}, processing={processing}, "
+                f"raw_state='{raw_state}'"
+            )
 
         return SlotSample(
             timestamp=time.time(),
@@ -274,6 +377,10 @@ class Monitor:
     def _error_sample(self, message: str) -> SlotSample:
         previous = self.last_good_sample
         if previous is None:
+            if self.debug_logger:
+                self.debug_logger.warning(
+                    f"First fetch failed, returning zeroed sample: {message}"
+                )
             return SlotSample(
                 timestamp=time.time(),
                 slot_id=self.slot_id,
@@ -283,6 +390,11 @@ class Monitor:
                 generated_tokens=0,
                 processing=False,
                 error=message,
+            )
+
+        if self.debug_logger:
+            self.debug_logger.warning(
+                f"Fetch failed, retaining last known values: {message}"
             )
 
         return SlotSample(
@@ -786,6 +898,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=config.get("discovery_url", DISCOVERY_URL),
         help=f"URL to discover models from (default: {DISCOVERY_URL})",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="enable debug logging to lctop_debug.log",
+    )
     return parser.parse_args(argv)
 
 
@@ -827,6 +944,8 @@ def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int]:
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    debug_logger = DebugLogger(enabled=False)
+
     try:
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
@@ -834,9 +953,17 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     args = parse_args(argv)
 
+    # Enable debug logging if --debug flag is set
+    debug_logger = DebugLogger(enabled=args.debug)
+    if args.debug:
+        debug_logger.info("Debug logging enabled")
+        debug_logger.info(f"Log file: {debug_logger.log_path}")
+
     try:
         if args.test:
             # Fully simulated: no endpoint is constructed and no HTTP request is made.
+            if args.debug:
+                debug_logger.info("Starting test mode with simulated data")
             curses.wrapper(run_test, args.interval)
         else:
             url = args.url
@@ -844,19 +971,39 @@ def main(argv: Iterable[str] | None = None) -> int:
 
             if port is None:
                 try:
+                    if args.debug:
+                        debug_logger.info(
+                            f"Port not specified, attempting discovery from {args.discovery_url}"
+                        )
                     url, port = discover_endpoint(args.discovery_url)
+                    if args.debug:
+                        debug_logger.info(
+                            f"Discovery successful: url={url}, port={port}"
+                        )
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
-                    print(f"lctop: discovery failed: {e}", file=sys.stderr)
+                    error_msg = f"lctop: discovery failed: {e}"
+                    if args.debug:
+                        debug_logger.exception(error_msg, e)
+                    print(error_msg, file=sys.stderr)
                     return 1
 
             endpoint = f"{url.rstrip('/')}:{port}/slots"
-            monitor = Monitor(endpoint, args.slot, args.interval)
+            if args.debug:
+                debug_logger.info(f"Connecting to endpoint: {endpoint}")
+            monitor = Monitor(endpoint, args.slot, args.interval, debug_logger=debug_logger)
             curses.wrapper(main_loop, monitor)
     except KeyboardInterrupt:
+        if args.debug:
+            debug_logger.info("Interrupted by user (Ctrl+C)")
         return 130
     except curses.error as exc:
-        print(f"lctop: terminal/curses error: {exc}", file=sys.stderr)
+        error_msg = f"lctop: terminal/curses error: {exc}"
+        if args.debug:
+            debug_logger.exception(error_msg, exc)
+        print(error_msg, file=sys.stderr)
         return 1
+    finally:
+        debug_logger.close()
 
     return 0
 

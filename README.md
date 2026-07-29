@@ -42,6 +42,7 @@ lctop [options]
 | `--interval SECONDS` | Polling interval | `1.0` |
 | `--test` | Run a simulated usage sweep (no server required) | — |
 | `--discovery-url URL` | URL to discover models from | `http://127.0.0.1:8080/models` |
+| `--debug` | Enable debug logging to `lctop_debug.log` | — |
 
 If `--port` is not provided, `lctop` attempts to discover the active model and its port from the `--discovery-url`.
 
@@ -76,6 +77,14 @@ Run the built-in test mode to preview the UI without a server:
 ```bash
 lctop --test
 ```
+
+Enable debug logging to trace internal operations:
+
+```bash
+lctop --debug
+```
+
+Debug output is written to `lctop_debug.log` in the current directory.
 
 ## Interface
 
@@ -139,6 +148,7 @@ CLI arguments override config file values.
 - **`run_test()`** — a simulated mode that sweeps context usage from 0 % to 100 % and back for UI preview.
 - **`discover_endpoint()`** — queries the `/models` endpoint to find a loaded model and infer its server URL and port.
 - **`config_loader.py`** — standalone JSON config loader utility.
+- **`debug_logger.py`** — file-based debug logger that writes to `lctop_debug.log` when `--debug` is active.
 
 ## Server compatibility
 
@@ -154,6 +164,19 @@ The `/slots` response format varies between llama.cpp builds and versions. `lcto
 - HTTP errors, timeouts, and JSON parse failures produce a non-fatal sample that retains the last known values and flags an error message on the status line.
 - The progress bar clamps to valid ranges and never crashes on empty data.
 - Terminal resize events are handled gracefully — the screen re-erases and redraws on the next cycle.
+
+## Debug logging
+
+When `--debug` is enabled, `lctop` writes detailed diagnostic output to `lctop_debug.log` in the current directory. This includes:
+
+- Application startup and configuration loading
+- HTTP request/response details
+- Slot selection and data normalization steps
+- Exception tracebacks with full stack traces
+
+The log file is excluded from version control via `.gitignore`.
+
+## License
 
 ## License
 
