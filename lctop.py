@@ -9,7 +9,7 @@ Requirements:
     Python 3.10+
     curses
     Python standard library only
-"""
+"""  # noqa: EXE001
 
 from __future__ import annotations
 
@@ -1000,7 +1000,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
                     error_msg = f"lctop: discovery failed: {e}"
                     if args.debug:
-                        debug_logger.exception(error_msg, e)
+                        debug_logger.exception(error_msg)
                     print(error_msg, file=sys.stderr)
                     return 1
             elif port is None:
