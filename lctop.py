@@ -12,7 +12,6 @@ Requirements:
 """
 
 from __future__ import annotations
-
 import argparse
 import curses
 import json
@@ -124,6 +123,7 @@ class Monitor:
         try:
             with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
                 payload = json.load(response)
+
             slot = self._select_slot(payload)
             sample = self._normalise_slot(slot)
             self.last_good_sample = sample
@@ -137,6 +137,7 @@ class Monitor:
             TypeError,
             KeyError,
         ) as exc:
+
             sample = self._error_sample(str(exc))
 
         self.samples.append(sample)
@@ -207,6 +208,18 @@ class Monitor:
             "tokens_generated",
             default=0,
         )
+        # Fallback: some llama.cpp versions nest counters inside next_token[0]
+        if generated == 0:
+            next_token = slot.get("next_token")
+            if isinstance(next_token, list) and next_token:
+                generated = first_int(
+                    next_token[0],
+                    "n_decoded",
+                    "n_generated_tokens",
+                    "generated_tokens",
+                    "tokens_generated",
+                    default=0,
+                )
 
         used = first_int(
             slot,
