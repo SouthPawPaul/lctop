@@ -39,12 +39,13 @@ lctop [options]
 | `--url URL` | llama.cpp server URL | `http://127.0.0.1` |
 | `--port PORT` | llama.cpp server port (optional) | — |
 | `--slot N` | Slot ID to monitor | `0` |
+| `--model NAME` | Model name for `/slots` query parameter | — |
 | `--interval SECONDS` | Polling interval | `1.0` |
 | `--test` | Run a simulated usage sweep (no server required) | — |
 | `--discovery-url URL` | URL to discover models from | `http://127.0.0.1:8080/models` |
 | `--debug` | Enable debug logging to `lctop_debug.log` | — |
 
-If `--port` is not provided, `lctop` attempts to discover the active model and its port from the `--discovery-url`.
+If `--port` is not provided, `lctop` attempts to discover the active model and its port from the `--discovery-url`. When discovery finds a loaded model, the `--model` parameter is set automatically.
 
 ### Examples
 
@@ -58,6 +59,12 @@ Monitor slot 0 on a specific server (manual configuration):
 
 ```bash
 lctop --url http://192.168.1.50 --port 8080
+```
+
+Monitor a specific model on a remote server:
+
+```bash
+lctop --url http://192.168.1.50 --port 8080 --model my-model-name
 ```
 
 Monitor slot 0 using a custom discovery endpoint:
@@ -121,6 +128,7 @@ lctop                          slot 0
   "url": "http://192.168.1.50",
   "port": 8080,
   "slot": 0,
+  "model": "my-model-name",
   "interval": 1.0,
   "discovery_url": "http://127.0.0.1:8080/models"
 }

@@ -884,6 +884,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="slot ID to monitor (default: 0)",
     )
     parser.add_argument(
+        "--model",
+        default=config.get("model"),
+        metavar="NAME",
+        help="model name for the /slots query parameter",
+    )
+    parser.add_argument(
         "--interval",
         type=positive_float,
         default=config.get("interval", DEFAULT_INTERVAL),
@@ -908,8 +914,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int]:
-    """Discover the llama.cpp endpoint from the models list."""
+def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int, str]:
+    """Discover the llama.cpp endpoint from the models list.
+
+    Returns (url, port, model_id) for the first loaded model.
+    """
     request = urllib.request.Request(
         discovery_url,
         headers={
@@ -932,13 +941,14 @@ def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int]:
         status = model.get("status")
         if isinstance(status, dict) and (status.get("value") == "loaded" or status.get("status") == "loaded"):
             args_list = status.get("args")
+            model_id = model.get("id", "")
             if isinstance(args_list, list) and len(args_list) > 5:
                 try:
                     url = str(args_list[2])
                     if "://" not in url:
                         url = f"http://{url}"
                     port = int(args_list[5])
-                    return url, port
+                    return url, port, model_id
                 except (ValueError, TypeError, IndexError):
                     continue
 
@@ -978,11 +988,14 @@ def main(argv: Iterable[str] | None = None) -> int:
                         debug_logger.info(
                             f"Port not specified and no explicit URL, attempting discovery from {args.discovery_url}"
                         )
-                    url, port = discover_endpoint(args.discovery_url)
+                    url, port, model_id = discover_endpoint(args.discovery_url)
                     if args.debug:
                         debug_logger.info(
-                            f"Discovery successful: url={url}, port={port}"
+                            f"Discovery successful: url={url}, port={port}, model={model_id}"
                         )
+                    # Use discovered model if --model not explicitly provided.
+                    if not args.model:
+                        args.model = model_id
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
                     error_msg = f"lctop: discovery failed: {e}"
                     if args.debug:
@@ -1011,12 +1024,19 @@ def main(argv: Iterable[str] | None = None) -> int:
                 netloc = f"{parsed.hostname}:{parsed.port}"
             elif port:
                 netloc = f"{parsed.hostname}:{port}"
+            # Build query string: merge existing query with model param.
+            query_parts = []
+            if parsed.query:
+                query_parts.append(parsed.query)
+            if args.model:
+                query_parts.append(f"model={args.model}")
+            query = "&".join(query_parts)
             endpoint = urlparse.urlunparse((
                 parsed.scheme,
                 netloc,
                 parsed.path.rstrip("/") + "/slots",
                 parsed.params,
-                parsed.query,
+                query,
                 parsed.fragment,
             ))
             if args.debug:
