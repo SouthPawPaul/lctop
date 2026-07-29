@@ -12,6 +12,7 @@ Requirements:
 """
 
 from __future__ import annotations
+
 import argparse
 import curses
 import json
@@ -174,7 +175,7 @@ class Monitor:
         ) as exc:
             if self.debug_logger:
                 self.debug_logger.exception(
-                    f"Fetch #{self.fetch_count} failed for {self.url}", exc
+                    f"Fetch #{self.fetch_count} failed for {self.url}", exc  # noqa: TRY401
                 )
 
             sample = self._error_sample(str(exc))
@@ -1010,8 +1011,11 @@ def main(argv: Iterable[str] | None = None) -> int:
                     parsed = urlparse.urlparse(url)
                     if parsed.port:
                         port = parsed.port
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as e:
+                    if args.debug:
+                        debug_logger.warning(
+                            f"Failed to parse port from URL {url}: {e}"
+                        )
                 if args.debug:
                     debug_logger.info(
                         f"Using default port {port} for URL {url}"
@@ -1080,7 +1084,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     except curses.error as exc:
         error_msg = f"lctop: terminal/curses error: {exc}"
         if args.debug:
-            debug_logger.exception(error_msg, exc)
+            debug_logger.exception(error_msg)
         print(error_msg, file=sys.stderr)
         return 1
     finally:
