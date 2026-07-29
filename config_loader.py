@@ -1,6 +1,6 @@
 import json
-import os
 from pathlib import Path
+
 
 def load_config(config_path: str | Path) -> dict:
     """Load configuration from a JSON file."""

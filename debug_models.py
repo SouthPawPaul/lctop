@@ -1,5 +1,6 @@
-import urllib.request
 import json
+import urllib.request
+from urllib.error import URLError
 
 url = "http://127.0.0.1:8080/models"
 try:
@@ -7,5 +8,5 @@ try:
         data = json.load(response)
         print(f"Type: {type(data)}")
         print(f"Content: {data}")
-except Exception as e:
+except (URLError, json.JSONDecodeError) as e:
     print(f"Error: {e}")
