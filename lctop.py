@@ -1021,11 +1021,23 @@ def main(argv: Iterable[str] | None = None) -> int:
             # attempt discovery to find the model name.
             if args.model is None and port is not None and url != DEFAULT_URL:
                 try:
+                    # Derive discovery URL from --url if using default discovery URL.
+                    discovery_url = args.discovery_url
+                    if discovery_url == DISCOVERY_URL:
+                        parsed_url = urlparse.urlparse(url)
+                        discovery_url = urlparse.urlunparse((
+                            parsed_url.scheme,
+                            f"{parsed_url.hostname}:8080",
+                            "/models",
+                            "",
+                            "",
+                            "",
+                        ))
                     if args.debug:
                         debug_logger.info(
-                            f"No model specified, attempting discovery for model name from {args.discovery_url}"
+                            f"No model specified, attempting discovery for model name from {discovery_url}"
                         )
-                    _, _, model_id = discover_endpoint(args.discovery_url)
+                    _, _, model_id = discover_endpoint(discovery_url)
                     if args.debug:
                         debug_logger.info(f"Discovered model: {model_id}")
                     args.model = model_id
