@@ -1017,6 +1017,24 @@ def main(argv: Iterable[str] | None = None) -> int:
                         f"Using default port {port} for URL {url}"
                     )
 
+            # When --url and --port are provided but --model is missing,
+            # attempt discovery to find the model name.
+            if args.model is None and port is not None and url != DEFAULT_URL:
+                try:
+                    if args.debug:
+                        debug_logger.info(
+                            f"No model specified, attempting discovery for model name from {args.discovery_url}"
+                        )
+                    _, _, model_id = discover_endpoint(args.discovery_url)
+                    if args.debug:
+                        debug_logger.info(f"Discovered model: {model_id}")
+                    args.model = model_id
+                except (ValueError, urllib.error.URLError, TimeoutError) as e:
+                    if args.debug:
+                        debug_logger.warning(
+                            f"Could not discover model: {e}"
+                        )
+
             # Properly reconstruct the URL with port in the right place.
             parsed = urlparse.urlparse(url)
             netloc = parsed.hostname or "localhost"
