@@ -11,7 +11,6 @@ import datetime
 import os
 import sys
 import traceback
-from typing import Any
 
 
 class DebugLogger:
@@ -38,7 +37,7 @@ class DebugLogger:
 
     def _timestamp(self) -> str:
         """Return a human-readable timestamp string."""
-        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
     def log(self, message: str, level: str = "INFO") -> None:
         """Write a timestamped message to the log file.

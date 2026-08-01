@@ -9,9 +9,10 @@ Requirements:
     Python 3.10+
     curses
     Python standard library only
-"""
+"""  # noqa: EXE001
 
 from __future__ import annotations
+
 import argparse
 import curses
 import json
@@ -171,7 +172,7 @@ class Monitor:
         ) as exc:
             if self.debug_logger:
                 self.debug_logger.exception(
-                    f"Fetch #{self.fetch_count} failed for {self.url}", exc
+                    f"Fetch #{self.fetch_count} failed for {self.url}", exc  # noqa: TRY401
                 )
 
             sample = self._error_sample(str(exc))
@@ -989,7 +990,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         args.model = model_id
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
                     error_msg = f"lctop: discovery failed: {e}"
-                    debug_logger.exception(error_msg, e)
+                    debug_logger.exception(error_msg)
                     print(error_msg, file=sys.stderr)
                     return 1
             elif port is None:
@@ -1000,8 +1001,10 @@ def main(argv: Iterable[str] | None = None) -> int:
                     parsed = urlparse.urlparse(url)
                     if parsed.port:
                         port = parsed.port
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as e:
+                    debug_logger.warning(
+                        f"Failed to parse port from URL {url}: {e}"
+                    )
                 debug_logger.info(f"Using default port {port} for URL {url}")
 
             # When --url and --port are provided but --model is missing,
@@ -1055,7 +1058,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 130
     except curses.error as exc:
         error_msg = f"lctop: terminal/curses error: {exc}"
-        debug_logger.exception(error_msg, exc)
+        debug_logger.exception(error_msg)
         print(error_msg, file=sys.stderr)
         return 1
     finally:
