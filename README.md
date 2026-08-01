@@ -155,8 +155,38 @@ CLI arguments override config file values.
 - **`main_loop()`** — the polling loop that drives fetch-and-draw, handling input and resizing.
 - **`run_test()`** — a simulated mode that sweeps context usage from 0 % to 100 % and back for UI preview.
 - **`discover_endpoint()`** — queries the `/models` endpoint to find a loaded model and infer its server URL and port.
-- **`config_loader.py`** — standalone JSON config loader utility.
 - **`debug_logger.py`** — file-based debug logger that writes to `lctop_debug.log` when `--debug` is active.
+
+## Code walkthrough for beginners
+
+This section is for readers who are comfortable programming but new to Python specifically. It's a suggested path through `lctop.py`, in the order the file is actually laid out, with notes on syntax that tends to surprise people coming from Java, C#, Go, or TypeScript. It assumes you already know what the code is *for* (see Architecture above) and just want to know how to read it.
+
+1. **Imports and constants — top of the file.**
+   Python has no header/source split: everything is read top-to-bottom by the interpreter, so anything a function uses must already be defined earlier in the file (or imported). `from debug_logger import DebugLogger` reaches into the neighbouring `debug_logger.py` and pulls the class straight in — modules are just files, there's no project/namespace configuration needed. Names in `ALL_CAPS` like `DEFAULT_URL` and `PAIR_GREEN` are a *convention* meaning "treat this as constant" — Python has no `const`/`final` keyword to enforce it. `from __future__ import annotations` near the top is boilerplate that lets type hints like `str | None` be written without Python evaluating them at import time.
+
+2. **`SlotSample` — a `@dataclass`.**
+   `@dataclass(slots=True)` auto-generates `__init__`, `__repr__`, and equality for the class from its field list, similar to a C# `record` or Kotlin `data class`. `slots=True` is a memory/speed detail: it stores fields in a fixed layout instead of Python's normal per-instance dictionary. Look at `remaining`, `percentage`, and `status` just below the fields — each is a plain method wearing an `@property` decorator, so callers read `sample.percentage` like a field, no parentheses. That's Python's equivalent of a C#/Kotlin computed property.
+
+3. **`Monitor.fetch()` — the network call.**
+   `with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:` is a *context manager* — Python's `with` block, equivalent to Java's try-with-resources or C#'s `using`. It guarantees the connection closes when the block exits, error or not. Just below, notice `except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ...) as exc:` — grouping several exception types in one tuple catches all of them with a single handler, no shared base class required.
+
+4. **`first_int()` — a small variadic helper.**
+   `def first_int(mapping, *keys: str, default: int = 0) -> int:` — `*keys` collects any number of positional arguments into a tuple, Python's version of C#'s `params string[]` or Java/C varargs. It's called like `first_int(slot, "n_ctx", "context_size", "ctx_size", default=0)` and just returns the first key that's actually present — this is how the code absorbs llama.cpp's inconsistent field naming across server versions. Note `default=0` sits *after* `*keys`: once a function captures `*args`, anything after it becomes keyword-only, so callers must write `default=0`, never pass it positionally.
+
+5. **Truthy checks instead of null checks.**
+   You'll see `if self.debug_logger:` all over `Monitor` and `main()`. Python doesn't distinguish `None` from "falsy" — every object is considered true unless it's specifically empty/zero/`None`, so this reads as "if this is set." The same idiom shows up as `slot.get("state") or slot.get("status") or slot.get("command") or ""` in `_normalise_slot()` — `or` returns its first truthy operand, which is a common Python stand-in for a null-coalescing operator.
+
+6. **f-strings — string formatting.**
+   `f"{sample.percentage:5.1f}%"` and `f"{value:n}"` (in `format_number()`) are *f-strings*: the `f` prefix means expressions inside `{}` get evaluated and inserted, roughly like C#'s `$"{value}"` or a JS template literal. The part after the colon (`5.1f`, `n`) is a format spec — `5.1f` means "fixed-point, 1 decimal, padded to width 5"; `n` means "locale-aware thousands separator."
+
+7. **`curses` — direct terminal drawing.**
+   `draw()` and `draw_progress_bar()` talk to the terminal through the `curses` module, Python's binding to the classic ncurses C library — there's no higher-level UI framework here, just cursor positioning and character writes (`window.addnstr(y, x, text, ...)`). `addstr_safe()` near the top of the drawing code is worth reading closely: it exists purely to work around a well-known curses quirk (writing into the terminal's very last cell raises an exception on some terminals), and is a good small example of defensively wrapping a quirky C library from Python.
+
+8. **`parse_args()` and the validator functions — command-line parsing.**
+   `argparse` is declarative: each `parser.add_argument(...)` call describes one flag, rather than manually looping over `sys.argv`. Look at `positive_float()`, `non_negative_int()`, and `port_number()` just above `parse_args()` — small functions passed in as `type=positive_float`. `argparse` calls them on the raw string the user typed; if they raise `argparse.ArgumentTypeError`, `argparse` turns that into a friendly CLI error message and a clean exit, automatically.
+
+9. **`main()` and the entry point.**
+   The very last line of the file, `if __name__ == "__main__":`, is Python's substitute for a `main` method entry point. Every Python file can be both a script and an importable module; this check means "only call `main()` if this file was run directly, not imported elsewhere" — which is also why `main()` itself is defined near the bottom of the file rather than the top.
 
 ## Server compatibility
 
@@ -183,8 +213,6 @@ When `--debug` is enabled, `lctop` writes detailed diagnostic output to `lctop_d
 - Exception tracebacks with full stack traces
 
 The log file is excluded from version control via `.gitignore`.
-
-## License
 
 ## License
 
