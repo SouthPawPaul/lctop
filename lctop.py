@@ -26,7 +26,7 @@ import urllib.parse as urlparse
 import urllib.request
 from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from debug_logger import DebugLogger
@@ -36,7 +36,6 @@ MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
 DEFAULT_PORT = 8080
 DEFAULT_INTERVAL = 1.0
-DISCOVERY_URL = "http://127.0.0.1:8080/models"
 CONFIG_FILE = os.path.expanduser("~/.lctop.json")
 REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
@@ -900,11 +899,6 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="run a simulated usage sweep instead of contacting llama.cpp",
     )
     parser.add_argument(
-        "--discovery-url",
-        default=config.get("discovery_url", DISCOVERY_URL),
-        help=f"URL to discover models from (default: {DISCOVERY_URL})",
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help="enable debug logging to lctop_debug.log",
@@ -912,49 +906,151 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def discover_endpoint(
-    discovery_url: str = DISCOVERY_URL,
+def discover_active_model(
+    models_url: str,
     debug_logger: DebugLogger | None = None,
-) -> tuple[str, int, str]:
-    """Discover the llama.cpp endpoint from the models list.
-
-    Returns (url, port, model_id) for the first loaded model.
-    """
+) -> str:
+    """Return the first model reported as loaded by the /models endpoint."""
     if debug_logger:
-        debug_logger.info(f"Attempting discovery from {discovery_url}")
+        debug_logger.info(f"Attempting model discovery from {models_url}")
 
-    request = urllib.request.Request(discovery_url, headers=REQUEST_HEADERS)
+    request = urllib.request.Request(models_url, headers=REQUEST_HEADERS)
 
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
         payload = json.load(response)
 
-    if isinstance(payload, dict) and "data" in payload:
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
         models = payload["data"]
     elif isinstance(payload, list):
         models = payload
     else:
-        raise ValueError(f"Expected dict with 'data' or list from {discovery_url}")
+        raise ValueError(f"Expected dict with 'data' or list from {models_url}")
 
     for model in models:
+        if not isinstance(model, dict):
+            continue
+
         status = model.get("status")
-        if isinstance(status, dict) and (status.get("value") == "loaded" or status.get("status") == "loaded"):
-            args_list = status.get("args")
-            model_id = model.get("id", "")
-            if isinstance(args_list, list) and len(args_list) > 5:
-                try:
-                    url = str(args_list[2])
-                    if "://" not in url:
-                        url = f"http://{url}"
-                    port = int(args_list[5])
-                    if debug_logger:
-                        debug_logger.info(
-                            f"Discovery successful: url={url}, port={port}, model={model_id}"
-                        )
-                    return url, port, model_id
-                except (ValueError, TypeError, IndexError):
-                    continue
+        if not isinstance(status, dict):
+            continue
+
+        if status.get("value") != "loaded" and status.get("status") != "loaded":
+            continue
+
+        model_id = str(model.get("id", "")).strip()
+        if not model_id:
+            continue
+
+        if debug_logger:
+            debug_logger.info(f"Discovered active model: {model_id}")
+        return model_id
 
     raise ValueError("No loaded model found in discovery response")
+
+
+@dataclass(frozen=True, slots=True)
+class AppConfig:
+    """Fully resolved runtime configuration."""
+
+    url: str
+    port: int
+    slot_id: int
+    model: str | None
+    interval: float
+    test_mode: bool
+    debug: bool
+
+    @property
+    def endpoint(self) -> str:
+        """Build the final llama.cpp /slots endpoint."""
+        parsed = urlparse.urlparse(self.url)
+        host = parsed.hostname or "localhost"
+        netloc = f"{host}:{parsed.port or self.port}"
+
+        query = dict(urlparse.parse_qsl(parsed.query, keep_blank_values=True))
+        if self.model:
+            query["model"] = self.model
+
+        path = parsed.path.rstrip("/")
+        if not path.endswith("/slots"):
+            path += "/slots"
+
+        return urlparse.urlunparse(
+            parsed._replace(
+                netloc=netloc,
+                path=path,
+                query=urlparse.urlencode(query),
+            )
+        )
+
+    @property
+    def models_endpoint(self) -> str:
+        """Build the /models endpoint from the resolved host and port."""
+        parsed = urlparse.urlparse(self.url)
+        host = parsed.hostname or "localhost"
+        netloc = f"{host}:{parsed.port or self.port}"
+        return urlparse.urlunparse(
+            parsed._replace(
+                netloc=netloc,
+                path="/models",
+                params="",
+                query="",
+                fragment="",
+            )
+        )
+
+
+class ConfigResolver:
+    """Resolve CLI/config-file values into an immutable AppConfig."""
+
+    def __init__(self, debug_logger: DebugLogger) -> None:
+        self.debug_logger = debug_logger
+
+    def resolve(self, args: argparse.Namespace) -> AppConfig:
+        url = self._normalise_url(str(args.url))
+        port = self._validate_port(
+            args.port or self._port_from_url(url) or DEFAULT_PORT
+        )
+
+        config = AppConfig(
+            url=url,
+            port=port,
+            slot_id=args.slot,
+            model=args.model,
+            interval=args.interval,
+            test_mode=args.test,
+            debug=args.debug,
+        )
+
+        if config.test_mode or config.model is not None:
+            return config
+
+        model = discover_active_model(
+            config.models_endpoint,
+            self.debug_logger,
+        )
+        return replace(config, model=model)
+
+    @staticmethod
+    def _normalise_url(url: str) -> str:
+        url = url.strip()
+        if "://" not in url:
+            return f"http://{url}"
+        return url
+
+    @staticmethod
+    def _port_from_url(url: str) -> int | None:
+        try:
+            return urlparse.urlparse(url).port
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _validate_port(port: int) -> int:
+        if not 1 <= port <= 65535:
+            raise ValueError(f"port must be between 1 and 65535, got {port}")
+        return port
+
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -966,99 +1062,39 @@ def main(argv: Iterable[str] | None = None) -> int:
         pass
 
     args = parse_args(argv)
-
-    # Enable debug logging if --debug flag is set
     debug_logger = DebugLogger(enabled=args.debug)
     debug_logger.info("Debug logging enabled")
     debug_logger.info(f"Log file: {debug_logger.log_path}")
 
     try:
-        if args.test:
-            # Fully simulated: no endpoint is constructed and no HTTP request is made.
+        config = ConfigResolver(debug_logger).resolve(args)
+
+        if config.test_mode:
             debug_logger.info("Starting test mode with simulated data")
-            curses.wrapper(run_test, args.interval)
-        else:
-            url = args.url
-            port = args.port
+            curses.wrapper(run_test, config.interval)
+            return 0
 
-            # Only attempt discovery when neither --url nor --port is provided.
-            if port is None and (url == DEFAULT_URL or not url.startswith("http")):
-                try:
-                    url, port, model_id = discover_endpoint(args.discovery_url, debug_logger)
-                    # Use discovered model if --model not explicitly provided.
-                    if not args.model:
-                        args.model = model_id
-                except (ValueError, urllib.error.URLError, TimeoutError) as e:
-                    error_msg = f"lctop: discovery failed: {e}"
-                    debug_logger.exception(error_msg)
-                    print(error_msg, file=sys.stderr)
-                    return 1
-            elif port is None:
-                # User provided --url but no --port; try to extract port from URL
-                # or fall back to DEFAULT_PORT.
-                port = DEFAULT_PORT
-                try:
-                    parsed = urlparse.urlparse(url)
-                    if parsed.port:
-                        port = parsed.port
-                except (ValueError, TypeError) as e:
-                    debug_logger.warning(
-                        f"Failed to parse port from URL {url}: {e}"
-                    )
-                debug_logger.info(f"Using default port {port} for URL {url}")
+        endpoint = config.endpoint
+        debug_logger.info(f"Connecting to endpoint: {endpoint}")
 
-            # When --url and --port are provided but --model is missing,
-            # attempt discovery to find the model name.
-            if args.model is None and port is not None and url != DEFAULT_URL:
-                try:
-                    # Derive discovery URL from --url if using default discovery URL.
-                    discovery_url = args.discovery_url
-                    if discovery_url == DISCOVERY_URL:
-                        parsed_url = urlparse.urlparse(url)
-                        discovery_url = urlparse.urlunparse((
-                            parsed_url.scheme,
-                            f"{parsed_url.hostname}:{DEFAULT_PORT}",
-                            "/models",
-                            "",
-                            "",
-                            "",
-                        ))
-                    _, _, model_id = discover_endpoint(discovery_url, debug_logger)
-                    args.model = model_id
-                except (ValueError, urllib.error.URLError, TimeoutError) as e:
-                    debug_logger.warning(f"Could not discover model: {e}")
-
-            # Properly reconstruct the URL with port in the right place.
-            parsed = urlparse.urlparse(url)
-            netloc = parsed.hostname or "localhost"
-            if parsed.port:
-                netloc = f"{parsed.hostname}:{parsed.port}"
-            elif port:
-                netloc = f"{parsed.hostname}:{port}"
-            # Build query string: merge existing query with model param.
-            query_parts = []
-            if parsed.query:
-                query_parts.append(parsed.query)
-            if args.model:
-                query_parts.append(f"model={args.model}")
-            query = "&".join(query_parts)
-            endpoint = urlparse.urlunparse((
-                parsed.scheme,
-                netloc,
-                parsed.path.rstrip("/") + "/slots",
-                parsed.params,
-                query,
-                parsed.fragment,
-            ))
-            debug_logger.info(f"Connecting to endpoint: {endpoint}")
-            monitor = Monitor(endpoint, args.slot, args.interval, debug_logger=debug_logger)
-            curses.wrapper(main_loop, monitor)
+        monitor = Monitor(
+            endpoint,
+            config.slot_id,
+            config.interval,
+            debug_logger=debug_logger,
+        )
+        curses.wrapper(main_loop, monitor)
+    except (ValueError, urllib.error.URLError, TimeoutError) as exc:
+        error_msg = f"lctop: discovery failed: {exc}"
+        debug_logger.exception(error_msg, exc)
+        print(error_msg, file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         debug_logger.info("Interrupted by user (Ctrl+C)")
         return 130
     except curses.error as exc:
         error_msg = f"lctop: terminal/curses error: {exc}"
-        debug_logger.exception(error_msg)
+        debug_logger.exception(error_msg, exc)
         print(error_msg, file=sys.stderr)
         return 1
     finally:
