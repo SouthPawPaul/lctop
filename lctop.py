@@ -17,6 +17,7 @@ import argparse
 import curses
 import json
 import locale
+import logging
 import math
 import os
 import sys
@@ -29,8 +30,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from debug_logger import DebugLogger
-
 MIN_WIDTH = 60
 MIN_HEIGHT = 10
 DEFAULT_URL = "http://127.0.0.1"
@@ -39,11 +38,40 @@ DEFAULT_INTERVAL = 1.0
 CONFIG_FILE = os.path.expanduser("~/.lctop.json")
 REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
+LOG_FILE = "lctop_debug.log"
 REQUEST_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "lctop/1.0",
 }
 
+
+
+def configure_logging(enabled: bool) -> logging.Logger | None:
+    """Configure standard-library file logging when --debug is enabled."""
+    if not enabled:
+        return None
+
+    logger = logging.getLogger("lctop")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    # Avoid duplicate handlers if main() is called more than once in tests.
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+
+    handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s.%(msecs)03d] [%(levelname)7s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    logger.info("lctop debug log started")
+    logger.info("Log file: %s", os.path.abspath(LOG_FILE))
+    return logger
 
 def load_config() -> dict[str, Any]:
     """Load configuration from ~/.lctop.json."""
@@ -110,7 +138,7 @@ class Monitor:
         slot_id: int,
         interval: float,
         history_size: int = 300,
-        debug_logger: DebugLogger | None = None,
+        debug_logger: logging.Logger | None = None,
     ) -> None:
         self.url = url
         self.slot_id = slot_id
@@ -171,7 +199,7 @@ class Monitor:
         ) as exc:
             if self.debug_logger:
                 self.debug_logger.exception(
-                    f"Fetch #{self.fetch_count} failed for {self.url}", exc  # noqa: TRY401
+                    f"Fetch #{self.fetch_count} failed for {self.url}"
                 )
 
             sample = self._error_sample(str(exc))
@@ -908,7 +936,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
 def discover_active_model(
     models_url: str,
-    debug_logger: DebugLogger | None = None,
+    debug_logger: logging.Logger | None = None,
 ) -> str:
     """Return the first model reported as loaded by the /models endpoint."""
     if debug_logger:
@@ -924,7 +952,7 @@ def discover_active_model(
     elif isinstance(payload, list):
         models = payload
     else:
-        raise ValueError(f"Expected dict with 'data' or list from {models_url}")
+        raise TypeError(f"Expected dict with 'data' or list from {models_url}")
 
     for model in models:
         if not isinstance(model, dict):
@@ -1003,7 +1031,7 @@ class AppConfig:
 class ConfigResolver:
     """Resolve CLI/config-file values into an immutable AppConfig."""
 
-    def __init__(self, debug_logger: DebugLogger) -> None:
+    def __init__(self, debug_logger: logging.Logger | None) -> None:
         self.debug_logger = debug_logger
 
     def resolve(self, args: argparse.Namespace) -> AppConfig:
@@ -1054,28 +1082,26 @@ class ConfigResolver:
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    debug_logger = DebugLogger(enabled=False)
-
     try:
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
         pass
 
     args = parse_args(argv)
-    debug_logger = DebugLogger(enabled=args.debug)
-    debug_logger.info("Debug logging enabled")
-    debug_logger.info(f"Log file: {debug_logger.log_path}")
+    debug_logger = configure_logging(args.debug)
 
     try:
         config = ConfigResolver(debug_logger).resolve(args)
 
         if config.test_mode:
-            debug_logger.info("Starting test mode with simulated data")
+            if debug_logger:
+                debug_logger.info("Starting test mode with simulated data")
             curses.wrapper(run_test, config.interval)
             return 0
 
         endpoint = config.endpoint
-        debug_logger.info(f"Connecting to endpoint: {endpoint}")
+        if debug_logger:
+            debug_logger.info("Connecting to endpoint: %s", endpoint)
 
         monitor = Monitor(
             endpoint,
@@ -1086,19 +1112,24 @@ def main(argv: Iterable[str] | None = None) -> int:
         curses.wrapper(main_loop, monitor)
     except (ValueError, urllib.error.URLError, TimeoutError) as exc:
         error_msg = f"lctop: discovery failed: {exc}"
-        debug_logger.exception(error_msg, exc)
+        if debug_logger:
+            debug_logger.exception(error_msg)
         print(error_msg, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        debug_logger.info("Interrupted by user (Ctrl+C)")
+        if debug_logger:
+            debug_logger.info("Interrupted by user (Ctrl+C)")
         return 130
     except curses.error as exc:
         error_msg = f"lctop: terminal/curses error: {exc}"
-        debug_logger.exception(error_msg, exc)
+        if debug_logger:
+            debug_logger.exception(error_msg)
         print(error_msg, file=sys.stderr)
         return 1
     finally:
-        debug_logger.close()
+        if debug_logger:
+            debug_logger.info("lctop debug log ended")
+        logging.shutdown()
 
     return 0
 
