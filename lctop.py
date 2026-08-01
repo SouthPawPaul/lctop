@@ -39,6 +39,10 @@ DISCOVERY_URL = "http://127.0.0.1:8080/models"
 CONFIG_FILE = os.path.expanduser("~/.lctop.json")
 REQUEST_TIMEOUT = 3.0
 BAR_MAX_WIDTH = 72
+REQUEST_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "lctop/1.0",
+}
 
 
 def load_config() -> dict[str, Any]:
@@ -51,6 +55,7 @@ def load_config() -> dict[str, Any]:
             pass
     return {}
 
+
 # Colour-pair IDs.
 PAIR_GREEN = 1
 PAIR_YELLOW = 2
@@ -61,8 +66,6 @@ PAIR_HEADER = 6
 PAIR_ERROR = 7
 PAIR_DIALOG = 8
 PAIR_DIALOG_ACCENT = 9
-
-SHADE_CHARS=("░","▒","▓","█")
 
 
 @dataclass(slots=True)
@@ -131,13 +134,7 @@ class Monitor:
                 f"Fetch #{self.fetch_count} initiated for {self.url}"
             )
 
-        request = urllib.request.Request(
-            self.url,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "lctop/1.0",
-            },
-        )
+        request = urllib.request.Request(self.url, headers=REQUEST_HEADERS)
 
         try:
             if self.debug_logger:
@@ -914,18 +911,18 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int, str]:
+def discover_endpoint(
+    discovery_url: str = DISCOVERY_URL,
+    debug_logger: DebugLogger | None = None,
+) -> tuple[str, int, str]:
     """Discover the llama.cpp endpoint from the models list.
 
     Returns (url, port, model_id) for the first loaded model.
     """
-    request = urllib.request.Request(
-        discovery_url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "lctop/1.0",
-        },
-    )
+    if debug_logger:
+        debug_logger.info(f"Attempting discovery from {discovery_url}")
+
+    request = urllib.request.Request(discovery_url, headers=REQUEST_HEADERS)
 
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
         payload = json.load(response)
@@ -948,6 +945,10 @@ def discover_endpoint(discovery_url: str = DISCOVERY_URL) -> tuple[str, int, str
                     if "://" not in url:
                         url = f"http://{url}"
                     port = int(args_list[5])
+                    if debug_logger:
+                        debug_logger.info(
+                            f"Discovery successful: url={url}, port={port}, model={model_id}"
+                        )
                     return url, port, model_id
                 except (ValueError, TypeError, IndexError):
                     continue
@@ -967,15 +968,13 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     # Enable debug logging if --debug flag is set
     debug_logger = DebugLogger(enabled=args.debug)
-    if args.debug:
-        debug_logger.info("Debug logging enabled")
-        debug_logger.info(f"Log file: {debug_logger.log_path}")
+    debug_logger.info("Debug logging enabled")
+    debug_logger.info(f"Log file: {debug_logger.log_path}")
 
     try:
         if args.test:
             # Fully simulated: no endpoint is constructed and no HTTP request is made.
-            if args.debug:
-                debug_logger.info("Starting test mode with simulated data")
+            debug_logger.info("Starting test mode with simulated data")
             curses.wrapper(run_test, args.interval)
         else:
             url = args.url
@@ -984,22 +983,13 @@ def main(argv: Iterable[str] | None = None) -> int:
             # Only attempt discovery when neither --url nor --port is provided.
             if port is None and (url == DEFAULT_URL or not url.startswith("http")):
                 try:
-                    if args.debug:
-                        debug_logger.info(
-                            f"Port not specified and no explicit URL, attempting discovery from {args.discovery_url}"
-                        )
-                    url, port, model_id = discover_endpoint(args.discovery_url)
-                    if args.debug:
-                        debug_logger.info(
-                            f"Discovery successful: url={url}, port={port}, model={model_id}"
-                        )
+                    url, port, model_id = discover_endpoint(args.discovery_url, debug_logger)
                     # Use discovered model if --model not explicitly provided.
                     if not args.model:
                         args.model = model_id
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
                     error_msg = f"lctop: discovery failed: {e}"
-                    if args.debug:
-                        debug_logger.exception(error_msg, e)
+                    debug_logger.exception(error_msg, e)
                     print(error_msg, file=sys.stderr)
                     return 1
             elif port is None:
@@ -1012,10 +1002,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         port = parsed.port
                 except Exception:
                     pass
-                if args.debug:
-                    debug_logger.info(
-                        f"Using default port {port} for URL {url}"
-                    )
+                debug_logger.info(f"Using default port {port} for URL {url}")
 
             # When --url and --port are provided but --model is missing,
             # attempt discovery to find the model name.
@@ -1027,25 +1014,16 @@ def main(argv: Iterable[str] | None = None) -> int:
                         parsed_url = urlparse.urlparse(url)
                         discovery_url = urlparse.urlunparse((
                             parsed_url.scheme,
-                            f"{parsed_url.hostname}:8080",
+                            f"{parsed_url.hostname}:{DEFAULT_PORT}",
                             "/models",
                             "",
                             "",
                             "",
                         ))
-                    if args.debug:
-                        debug_logger.info(
-                            f"No model specified, attempting discovery for model name from {discovery_url}"
-                        )
-                    _, _, model_id = discover_endpoint(discovery_url)
-                    if args.debug:
-                        debug_logger.info(f"Discovered model: {model_id}")
+                    _, _, model_id = discover_endpoint(discovery_url, debug_logger)
                     args.model = model_id
                 except (ValueError, urllib.error.URLError, TimeoutError) as e:
-                    if args.debug:
-                        debug_logger.warning(
-                            f"Could not discover model: {e}"
-                        )
+                    debug_logger.warning(f"Could not discover model: {e}")
 
             # Properly reconstruct the URL with port in the right place.
             parsed = urlparse.urlparse(url)
@@ -1069,18 +1047,15 @@ def main(argv: Iterable[str] | None = None) -> int:
                 query,
                 parsed.fragment,
             ))
-            if args.debug:
-                debug_logger.info(f"Connecting to endpoint: {endpoint}")
+            debug_logger.info(f"Connecting to endpoint: {endpoint}")
             monitor = Monitor(endpoint, args.slot, args.interval, debug_logger=debug_logger)
             curses.wrapper(main_loop, monitor)
     except KeyboardInterrupt:
-        if args.debug:
-            debug_logger.info("Interrupted by user (Ctrl+C)")
+        debug_logger.info("Interrupted by user (Ctrl+C)")
         return 130
     except curses.error as exc:
         error_msg = f"lctop: terminal/curses error: {exc}"
-        if args.debug:
-            debug_logger.exception(error_msg, exc)
+        debug_logger.exception(error_msg, exc)
         print(error_msg, file=sys.stderr)
         return 1
     finally:
